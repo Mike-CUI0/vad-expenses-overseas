@@ -797,13 +797,17 @@ def extract_dash_amount_candidates_from_image(image):
     return amount_candidates
 
 
-def extract_total_amount_from_image(image_path):
+def extract_total_amount_from_image(image_path, log_callback=None):
     with Image.open(image_path) as img:
         candidates = extract_dash_amount_candidates_from_image(img)
+        used_method = "dash"
         # dash 방식으로 탐지 실패 시 전체 영역 기반 탐지로 폴백
         if not candidates:
             candidates = extract_amount_candidates_from_image(img)
+            used_method = "fullarea"
     if not candidates:
+        if log_callback:
+            log_callback(f"[금액후보없음] {Path(image_path).name}")
         return None
     stats = {}
     for value, score in candidates:
@@ -817,6 +821,10 @@ def extract_total_amount_from_image(image_path):
         stats.items(),
         key=lambda kv: (kv[1]["count"], kv[1]["score_max"], kv[1]["score_sum"], kv[0]),
     )[0]
+    if log_callback and len(stats) > 1:
+        # 후보가 여러 개일 때만 상세 로그 출력 (잘못 선택되는 경우 확인용)
+        cands_str = ", ".join(f"{v:.2f}(x{i['count']})" for v, i in sorted(stats.items(), key=lambda x: -x[1]["count"]))
+        log_callback(f"[금액후보] {Path(image_path).name} [{used_method}] 후보: {cands_str} → 선택: {best_value:.2f}")
     return round(best_value, 2)
 
 
@@ -846,7 +854,7 @@ def write_folder_images_to_excel_by_headers(work_folder, excel_path, log_callbac
     for index, (folder_name, image_path) in enumerate(image_items, start=1):
         try:
             target_col, header_text, class_source = resolve_header_by_folder(folder_name, header_cells)
-            amount = extract_total_amount_from_image(image_path)
+            amount = extract_total_amount_from_image(image_path, log_callback=log_callback)
             amount_text = f"{amount:.2f}" if amount is not None else "없음"
             class_text = header_text if header_text else "미분류"
             log_callback(
