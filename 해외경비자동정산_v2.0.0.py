@@ -17,6 +17,7 @@ try:
     from pptx import Presentation
     from pptx.enum.text import PP_ALIGN
     from pptx.util import Cm, Pt
+    
     PPTX_AVAILABLE = True
 except Exception:
     Presentation = None; PP_ALIGN = None; Cm = None; Pt = None
@@ -799,10 +800,22 @@ def extract_dash_amount_candidates_from_image(image):
 
 def extract_total_amount_from_image(image_path, log_callback=None):
     with Image.open(image_path) as img:
-        candidates = extract_dash_amount_candidates_from_image(img)
-        used_method = "dash"
-        # dash 방식으로 탐지 실패 시 전체 영역 기반 탐지로 폴백
-        if not candidates:
+        dash_candidates = extract_dash_amount_candidates_from_image(img)
+        # dash 후보 중 2회 이상 반복 인식된 값이 있으면 dash만 사용 (안정적)
+        # 없으면 full-area 후보까지 합산하여 더 많은 증거로 판단
+        if dash_candidates:
+            dash_counts = {}
+            for v, _ in dash_candidates:
+                k = round(v, 2)
+                dash_counts[k] = dash_counts.get(k, 0) + 1
+            if max(dash_counts.values()) >= 2:
+                candidates = dash_candidates
+                used_method = "dash"
+            else:
+                full_candidates = extract_amount_candidates_from_image(img)
+                candidates = dash_candidates + full_candidates
+                used_method = "dash+full"
+        else:
             candidates = extract_amount_candidates_from_image(img)
             used_method = "fullarea"
     if not candidates:
@@ -822,7 +835,6 @@ def extract_total_amount_from_image(image_path, log_callback=None):
         key=lambda kv: (kv[1]["count"], kv[1]["score_max"], kv[1]["score_sum"], kv[0]),
     )[0]
     if log_callback and len(stats) > 1:
-        # 후보가 여러 개일 때만 상세 로그 출력 (잘못 선택되는 경우 확인용)
         cands_str = ", ".join(f"{v:.2f}(x{i['count']})" for v, i in sorted(stats.items(), key=lambda x: -x[1]["count"]))
         log_callback(f"[금액후보] {Path(image_path).name} [{used_method}] 후보: {cands_str} → 선택: {best_value:.2f}")
     return round(best_value, 2)
